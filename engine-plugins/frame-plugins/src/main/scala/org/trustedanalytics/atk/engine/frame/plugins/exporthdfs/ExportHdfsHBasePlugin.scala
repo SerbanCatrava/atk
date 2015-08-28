@@ -18,18 +18,18 @@ package org.trustedanalytics.atk.engine.frame.plugins.exporthdfs
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.hbase.HBaseConfiguration
-import org.apache.hadoop.hbase.mapred.TableOutputFormat
-import org.apache.hadoop.hbase.mapreduce.TableInputFormat
-import org.apache.hadoop.mapred.JobConf
-import org.apache.spark.SparkContext
+import org.apache.hadoop.hbase.io.ImmutableBytesWritable
+import org.apache.hadoop.hbase.mapreduce.TableOutputFormat
+import org.apache.hadoop.hbase.util.Bytes
+import org.apache.hadoop.mapreduce.{ Job }
 import org.apache.spark.frame.FrameRdd
-import org.apache.spark.rdd.{RDD, PairRDDFunctions}
 import org.trustedanalytics.atk.UnitReturn
 import org.trustedanalytics.atk.domain.frame.{ ExportHdfsHBaseArgs }
-import org.trustedanalytics.atk.engine.frame.SparkFrame
+import org.trustedanalytics.atk.domain.schema.DataTypes
+import org.trustedanalytics.atk.engine.frame.{ RowWrapper, SparkFrame }
 import org.trustedanalytics.atk.engine.plugin.{ Invocation, PluginDoc, SparkCommandPlugin }
 import org.apache.hadoop.hbase.client.Put
-import org.apache.spark.SparkContext._
+import org.trustedanalytics.atk.domain.schema.Schema
 
 // Implicits needed for JSON conversion
 import spray.json._
@@ -65,42 +65,80 @@ class ExportHdfsHBasePlugin extends SparkCommandPlugin[ExportHdfsHBaseArgs, Unit
   override def execute(arguments: ExportHdfsHBaseArgs)(implicit invocation: Invocation): UnitReturn = {
 
     val frame: SparkFrame = arguments.frame
-    val rdd = frame.rdd
-    val columns = rdd.frameSchema.columnNames
-    val columnTypes = rdd.frameSchema.columns.map (_.dataType)
-
     val conf = createConfig(arguments.tableName)
-    val rawValues = rdd.mapRows(row => row.values())
-    // 1. Conver this rawValues List[Any] => List[Datatype]
-    // 2. Convert List[Datatype] Bytes.toBytes(value)
-    // 3. RDD[List[Array[Byte]]
-    // 4. Ask user which column is row key
 
-    val pairRdd = rawValues.map((_, ("")))
-
-
-
-//    val pairRDD = rdd.map (row => {
-//      val values = row.
-//      val put = new Put(null)
-//    })
+    val pairRdd = ExportHBaseImpl.convertToPairRDD(frame.rdd,
+      arguments.familyName.getOrElse("familyColumn"),
+      arguments.keyColumnName)
 
     pairRdd.saveAsNewAPIHadoopDataset(conf)
 
-    //new PairRDDFunctions(rdd.map(null)).saveAsNewAPIHadoopDataset (conf)
   }
 
   /**
-   * Create initial configuration for bHase reader
+   * Create initial configuration for hbase writer
    * @param tableName name of hBase table
    * @return hBase configuration
    */
   private def createConfig(tableName: String): Configuration = {
     val conf = HBaseConfiguration.create()
     conf.set(TableOutputFormat.OUTPUT_TABLE, tableName)
+    val job = new Job(conf)
+    job.setOutputFormatClass(classOf[TableOutputFormat[ImmutableBytesWritable]])
 
-    conf
+    job.getConfiguration
   }
 
-//  private def save
+}
+
+/**
+ * Helper class for hbase implementation
+ */
+object ExportHBaseImpl extends Serializable {
+
+  /**
+   * Creates pair rdd to save to hbase
+   * @param rdd initial frame rdd
+   * @param familyColumnName family column name for hbase
+   * @param keyColumnName key column name for hbase
+   * @param invocation information about the user and the circumstances at the time of the call, as well as a function
+   *                   that can be called to produce a SparkContext that can be used during this invocation
+   * @return pair rdd
+   */
+  def convertToPairRDD(rdd: FrameRdd,
+                       familyColumnName: String,
+                       keyColumnName: String)(implicit invocation: Invocation) = {
+
+    rdd.mapRows(row => buildRow(row, rdd.frameSchema, familyColumnName, keyColumnName))
+  }
+
+  /**
+   * Builds a row
+   * @param row row of the original frame
+   * @param schema original schema
+   * @param familyColumnName family column name for hbase
+   * @param keyColumnName key column name for hbase
+   * @return hbase row
+   */
+  private def buildRow(row: RowWrapper, schema: Schema, familyColumnName: String, keyColumnName: String) = {
+    val columnTypes = schema.columns.map(_.dataType)
+    val columnNames = schema.columns.map(_.name)
+    val familyColumnAsByteArray = Bytes.toBytes(familyColumnName)
+
+    val valuesAsDataTypes = DataTypes.parseMany(columnTypes.toArray)(row.values().toArray)
+    val valuesAsByteArray = valuesAsDataTypes.map(value => {
+      if (null == value) null else Bytes.toBytes(value.toString)
+    })
+
+    val keyColumnValue = Bytes.toBytes(keyColumnName + Math.random())
+    val put = new Put(keyColumnValue)
+    for (index <- 0 to valuesAsByteArray.length - 1) {
+      if (valuesAsByteArray(index) != null) {
+        put.add(familyColumnAsByteArray, Bytes.toBytes(columnNames(index)), valuesAsByteArray(index))
+      }
+    }
+
+    (new ImmutableBytesWritable(keyColumnValue), put)
+  }
+
 }

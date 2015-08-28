@@ -17,6 +17,7 @@
 package org.trustedanalytics.atk.engine
 
 import com.esotericsoftware.kryo.Kryo
+import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.trustedanalytics.atk.domain.schema.Schema
 import org.trustedanalytics.atk.engine.frame.plugins.ClassificationMetrics
 import org.apache.spark.sql.Row
@@ -24,6 +25,7 @@ import org.trustedanalytics.atk.engine.frame.MiscFrameFunctions
 import org.trustedanalytics.atk.graphbuilder.driver.spark.titan.GraphBuilderKryoRegistrator
 import org.apache.spark.frame.FrameRdd
 import org.apache.spark.serializer.KryoRegistrator
+import org.apache.hadoop.hbase.client.Put
 
 /**
  * Register classes that are going to be serialized by Kryo.
@@ -47,6 +49,8 @@ class EngineKryoRegistrator extends KryoRegistrator {
     kryo.register(classOf[Row])
     kryo.register(classOf[Schema])
     kryo.register(classOf[FrameRdd])
+    kryo.register(classOf[ImmutableBytesWritable])
+    kryo.register(classOf[Put])
     kryo.register(ClassificationMetrics.getClass)
     kryo.register(MiscFrameFunctions.getClass)
 
