@@ -54,7 +54,8 @@ object PregelAlgorithm extends Serializable {
    * @return Vertex and edge list for the output graph and a logging string reporting on the execution of the belief
    *         propagation run.
    */
-  def run(inVertices: RDD[GBVertex], inEdges: RDD[GBEdge], args: PregelArgs)(vertexProgram: (VertexId, VertexState, Map[Long, Vector[Double]]) => VertexState): (RDD[GBVertex], RDD[GBEdge], String) = {
+  def run(inVertices: RDD[GBVertex], inEdges: RDD[GBEdge], args: PregelArgs)(vertexProgram: (VertexId, VertexState, Map[Long, Vector[Double]]) => VertexState,
+                                                                             msgSender: (EdgeTriplet[VertexState, Double]) => Iterator[(VertexId, Map[Long, Vector[Double]])]): (RDD[GBVertex], RDD[GBEdge], String) = {
 
     val outputPropertyLabel = args.posteriorProperty
     val inputPropertyName: String = args.priorProperty
@@ -97,10 +98,8 @@ object PregelAlgorithm extends Serializable {
           .partitionBy(PartitionStrategy.RandomVertexCut)
 
         val runner = new PregelWrapper(maxIterations,
-          DefaultValues.powerDefault,
-          DefaultValues.smoothingDefault,
           convergenceThreshold)
-        val (newGraph, log) = runner.run(graph)(vertexProgram)
+        val (newGraph, log) = runner.run(graph)(vertexProgram, msgSender)
 
         val outVertices = newGraph.vertices.map({
           case (vid, vertexState) =>
